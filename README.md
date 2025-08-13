@@ -34,7 +34,8 @@ Clearing your browser data will remove your farm.
 - The code is fully commented for those who want to modify or extend functionality.
 
 ## 📸 Screenshots
-*(Add your own screenshots here)*
+![Image](https://github.com/user-attachments/assets/13e10aac-3ef6-495f-bcc0-84ee7c459194)
+![Image](https://github.com/user-attachments/assets/ac36d708-01cf-4e24-a758-356c482eaecb)
 
 ## 📜 License
 This project is open-source and free to use under the **MIT License**.
