@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>FocusFarm - Stable Edition</title>
+    <style>
+        :root {
+            --sky-top: #87CEEB; --sky-bottom: #ADD8E6;
+            --ground-color: #A0522D; --ground-detail: #8B4513;
+            --sun-moon-color: #FFD700; --shadow-color: rgba(0,0,0,0.15);
+            --text-color: #333; --text-light: #f0f0f0;
+            --panel-bg: rgba(255,255,255,0.92); --panel-border: rgba(0,0,0,0.08);
+            --button-primary-bg: #4CAF50; --button-primary-hover: #45a049;
+            --button-secondary-bg: #007BFF; --button-secondary-hover: #0069d9;
+            --button-danger-bg: #DC3545; --button-danger-hover: #c82333;
+            --plant-scale: 1.0; --sway-intensity: 0.5deg; --sway-duration: 15s;
+            --controls-height: 55px; --tracker-height: 180px; --tracker-height-mobile: 140px;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        html, body { height:100%; font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif; overflow:hidden; background-color:var(--sky-top); }
+
+        #game-container { display:flex; flex-direction:column; height:100%; position:relative; }
+        #sky-gradient-layer { position:absolute; top:0; left:0; width:100%; height:100%; background:linear-gradient(to bottom,var(--sky-top),var(--sky-bottom)); transition:background 2s linear; z-index:-2; }
+        #sun-moon { position:absolute; width:45px; height:45px; background-color:var(--sun-moon-color); border-radius:50%; top:10%; left:10%; box-shadow:0 0 15px var(--sun-moon-color); transition:all 2s linear; z-index:-1; }
+        #stars-container { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:-1; opacity:0; transition:opacity 2s linear; }
+        .star { position:absolute; background-color:white; border-radius:50%; animation:twinkle 2.5s infinite alternate; }
+        @keyframes twinkle { 0%{opacity:0.3;transform:scale(0.7);} 100%{opacity:0.9;transform:scale(1.1);} }
+
+        #controls { padding:8px 12px; background-color:var(--panel-bg); backdrop-filter:blur(4px); color:var(--text-color); display:flex; align-items:center; gap:10px; flex-wrap:wrap; z-index:20; border-bottom:1px solid var(--panel-border); box-shadow:0 1px 4px rgba(0,0,0,0.08); height:var(--controls-height); }
+        #farm-field-container { flex-grow:1; overflow:hidden; position:relative; cursor:grab; touch-action:none; }
+        #farm-field-container.planting-active, #farm-field-container.moving-plant-active { cursor:crosshair; }
+        #farm-field-container.dragging { cursor:grabbing; }
+
+        #farm-field {
+            width:2500px; height:2000px; position:absolute; top:0; left:0;
+            background-color:var(--ground-color);
+            background-image: linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px), 
+                              linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px),
+                              repeating-linear-gradient(-45deg, transparent, transparent 5px, var(--ground-detail) 5px, var(--ground-detail) 6px ); 
+            background-size: 30px 30px, 30px 30px, 7px 7px;
+            transform-origin:top left; transition:transform 0.15s ease-out, background-color 2s linear; will-change:transform;
+        }
+        /* Wind removed for performance */
+
+        #progress-tracker { height:var(--tracker-height); overflow-y:auto; background-color:var(--panel-bg); backdrop-filter:blur(4px); padding:8px; border-top:1px solid var(--panel-border); z-index:15; box-shadow:0 -1px 4px rgba(0,0,0,0.05); }
+        #progress-tracker h2 { margin-bottom:6px; font-size:1em; color:var(--text-color); }
+
+        #controls button, .modal-content button, #plant-info-popup button { padding:7px 12px; cursor:pointer; border:none; border-radius:4px; background-color:var(--button-primary-bg); color:white; font-size:0.85em; transition:background-color 0.15s ease; box-shadow:0 1px 2px rgba(0,0,0,0.08); }
+        #controls button:hover, .modal-content button:hover, #plant-info-popup button:hover { background-color:var(--button-primary-hover); }
+        #controls button.icon-button { padding:7px; font-size:1.1em; } 
+        #controls #start-focus.planting, #controls #cancel-move-plant { background-color:var(--button-danger-bg); }
+        #controls #start-focus.planting:hover, #controls #cancel-move-plant:hover { background-color:var(--button-danger-hover); }
+        #selected-plant-actions { display:inline-block; margin-left:auto; align-items:center; }
+        #selected-plant-actions button { background-color:var(--button-secondary-bg); margin-left:6px; }
+        #selected-plant-actions button:hover { background-color:var(--button-secondary-hover); }
+        #selected-plant-actions button.danger { background-color:var(--button-danger-bg); }
+        #selected-plant-actions button.danger:hover { background-color:var(--button-danger-hover); }
+        
+        .plant { position:absolute; cursor:pointer; display:flex; align-items:flex-end; justify-content:center; transition:transform 0.4s ease-out, opacity 0.4s ease-out; transform-origin:bottom center; will-change:transform,opacity; }
+        .plant.selected { outline:2px solid gold; outline-offset:3px; z-index:10 !important; }
+        .plant.paused .pause-icon { display:block; }
+        .plant-base { position:relative; width:100%; height:100%; transform:scale(var(--plant-scale)); transition:transform 0.6s cubic-bezier(0.175,0.885,0.32,1.275); }
+        .trunk, .canopy { transition:all 0.6s ease-out; }
+        .trunk { position:absolute; bottom:0; left:50%; transform:translateX(-50%); background-color:#6F4E37; border-radius:3px 3px 0 0; }
+        .canopy { position:absolute; background:linear-gradient(to bottom, #2E8B57, #228B22); border-radius:50% 50% 40% 40% / 60% 60% 45% 45%; animation:sway var(--sway-duration) ease-in-out infinite alternate; animation-delay:var(--sway-delay, 0s); }
+        .canopy.shrub-canopy { border-radius:50% / 30% 30% 70% 70%; background:linear-gradient(to bottom, #3CB371, #2E8B57); }
+        @keyframes sway { 0%{transform:translateX(-50%) rotate(calc(-1 * var(--sway-intensity)));} 100%{transform:translateX(-50%) rotate(var(--sway-intensity));} }
+        .plant[data-stage="0"] .plant-base { width:18px; height:14px; background-color:#A0522D; border-radius:50% / 60% 60% 40% 40%; box-shadow:inset 0 -1px 2px rgba(0,0,0,0.15); }
+        .plant[data-stage="1"] .canopy, .plant[data-stage="2"] .canopy, .plant[data-stage="3"] .canopy, .plant[data-stage="4"] .canopy, .plant[data-stage="5"] .canopy { left:50%; transform:translateX(-50%);}
+        .plant-shadow { position:absolute; bottom:-4px; left:50%; width:80%; height:12px; background:var(--shadow-color); border-radius:50%; filter:blur(2px); transform:translateX(-50%) scaleX(1); transition:background-color 2s linear, transform 2s linear; z-index:-1; }
+        .plant[data-stage="0"] .plant-shadow { width:14px; height:4px; } 
+        .pause-icon { display:none; position:absolute; top:-18px; left:50%; transform:translateX(-50%); font-size:14px; background:rgba(0,0,0,0.65); color:white; padding:1px 4px; border-radius:3px; z-index:6; user-select:none; }
+        .plant-info-display { position:absolute; bottom:-22px; left:50%; transform:translateX(-50%); font-size:10px; color:var(--text-light); background-color:rgba(0,0,0,0.6); padding:1px 5px; border-radius:3px; white-space:nowrap; z-index:4; box-shadow:0 1px 1px rgba(0,0,0,0.2); }
+        .plant[data-stage="0"] .plant-info-display { bottom:-18px; } 
+        .apple { position:absolute; width:10px; height:10px; border-radius:50%; z-index:2; background-color:#DC143C; background-image:radial-gradient(circle at 30% 30%, rgba(255,255,255,0.45) 1px, transparent 50%); box-shadow:1px 1px 1px rgba(0,0,0,0.2); pointer-events:none; }
+        .water-drop { position:absolute; width:5px; height:8px; background-color:#87CEFA; border-radius:50% 50% 50% 50% / 60% 60% 40% 40%; opacity:0; animation:fall-and-splash 0.9s ease-in forwards; z-index:3; pointer-events:none; top:-18px; left:50%; transform:translateX(-50%); }
+        @keyframes fall-and-splash { 0%{top:-18px;opacity:1;} 80%{top:50%;opacity:1;} 100%{top:45%;opacity:0;transform:translateX(-50%) scale(1.4);} }
+        
+        .axe-icon { position:absolute; width:35px; height:35px; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%238B4513' d='M22.7,1.3c-0.4-0.4-1-0.4-1.4,0L16.6,6H13v0.8l-4.6-4.6c-0.4-0.4-1-0.4-1.4,0s-0.4,1,0,1.4l4.6,4.6V11H11l-4.7-4.7c-0.4-0.4-1-0.4-1.4,0s-0.4,1,0,1.4l4.7,4.7v0.8H9.1L3.5,6.6C3.1,6.2,2.5,6.2,2.1,6.6s-0.4,1,0,1.4l5.6,5.6H7V17h0.8l-5.6,5.6c-0.4,0.4-0.4,1,0,1.4c0.2,0.2,0.5,0.3,0.7,0.3s0.5-0.1,0.7-0.3l5.6-5.6H10v-0.8l4.6,4.6c0.2,0.2,0.5,0.3,0.7,0.3s0.5-0.1,0.7-0.3c0.4-0.4,0.4-1,0-1.4L11.4,16H15v-0.8l4.6,4.6c0.2,0.2,0.5,0.3,0.7,0.3s0.5-0.1,0.7-0.3c0.4-0.4,0.4-1,0-1.4L16.4,14H17v-0.8l4.6,4.6c0.2,0.2,0.5,0.3,0.7,0.3s0.5-0.1,0.7-0.3c0.4-0.4,0.4-1,0-1.4L18.8,12H20V9.1l2.7-2.7C23.1,2.3,23.1,1.7,22.7,1.3z'/%3E%3Cpath fill='%23A0522D' d='M21.3,0.3c-0.4-0.4-1-0.4-1.4,0L14,6.2V2H7v7.2L1.4,14.8c-0.4,0.4-0.4,1,0,1.4c0.2,0.2,0.5,0.3,0.7,0.3s0.5-0.1,0.7-0.3L8.2,10H15v7.2l5.6,5.6c0.2,0.2,0.5,0.3,0.7,0.3s0.5-0.1,0.7-0.3c0.4-0.4,0.4-1,0-1.4L16.8,16H22V9.2l1.9-1.9c0.4-0.4,0.4-1,0-1.4L21.3,0.3z M14,15h-5V8h5V15z'/%3E%3C/svg%3E"); background-size:contain; background-repeat:no-repeat; z-index:12; opacity:0; }
+        .axe-icon.swing { animation:axe-swing 0.35s cubic-bezier(0.68,-0.55,0.27,1.55) 3; }
+        @keyframes axe-swing { 0%{transform:rotate(35deg) translateX(18px) translateY(-18px) scale(1.05);opacity:1;} 50%{transform:rotate(-55deg) translateX(-28px) translateY(18px) scale(0.95);opacity:1;} 100%{transform:rotate(35deg) translateX(18px) translateY(-18px) scale(1.05);opacity:1;} }
+        .plant.shaking { animation:tree-shake 0.07s linear 18; }
+        @keyframes tree-shake { 0%,100%{transform:translateX(0);} 25%{transform:translateX(-1.5px) rotate(-0.4deg);} 75%{transform:translateX(1.5px) rotate(0.4deg);} }
+        .plant.falling { animation:tree-fall 0.9s forwards ease-in; z-index:9; }
+        @keyframes tree-fall { 0%{transform:rotate(0deg);opacity:1;} 100%{transform:rotate(75deg) translateY(90px) scale(0.75);opacity:0;} }
+        .wood-chip { position:absolute; width:4px; height:2.5px; background-color:#DEB887; border-radius:1.5px; animation:fly-out 0.7s ease-out forwards; z-index:11; }
+        @keyframes fly-out { 0%{opacity:1;} 100%{opacity:0;transform:scale(0.4) rotate(320deg) translateX(var(--fly-x)) translateY(var(--fly-y));} }
+
+        #plant-table { width:100%; border-collapse:collapse; font-size:0.8em; }
+        #plant-table th, #plant-table td { border:1px solid var(--panel-border); padding:6px; text-align:left; vertical-align:middle; }
+        #plant-table th { background-color:rgba(0,0,0,0.04); position:sticky; top:-8px; z-index:1; backdrop-filter:blur(1px); }
+        #plant-table tbody tr:hover { background-color:rgba(0,0,0,0.025); }
+        .tracker-action-button { padding:3px 6px; font-size:0.85em; margin-left:4px; }
+
+        .modal { display:none; position:fixed; z-index:1000; left:0; top:0; width:100%; height:100%; overflow:auto; background-color:rgba(0,0,0,0.45); align-items:center; justify-content:center; }
+        .modal-content { background-color:#fefefe; margin:auto; padding:20px; border:1px solid #999; border-radius:6px; width:90%; max-width:480px; box-shadow:0 4px 12px rgba(0,0,0,0.25); }
+        .modal-content h3 { margin-top:0; margin-bottom:12px; font-size:1.15em; } .modal-content h4 { margin-top:12px; margin-bottom:6px; font-size:0.95em; color:#555; }
+        .modal-content label { display:block; margin-bottom:4px; font-weight:bold; font-size:0.9em;}
+        .modal-content input[type="text"], .modal-content input[type="number"], .modal-content select { width:100%; padding:8px; margin-bottom:12px; border:1px solid #ccc; border-radius:3px; box-sizing:border-box; font-size:0.9em; }
+        .custom-time-input-group { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+        .custom-time-input-group input[type="number"] { width:55px; }
+        .modal-buttons { text-align:right; margin-top:18px;} .modal-buttons button { margin-left:8px; }
+        .close-button { color:#999; float:right; font-size:26px; font-weight:bold; }
+        .close-button:hover, .close-button:focus { color:black; text-decoration:none; cursor:pointer; }
+
+        #plant-info-popup { 
+            display:none; position:fixed; /* Fixed position for viewport relativity */
+            background-color:var(--panel-bg); border:1px solid var(--panel-border); 
+            border-radius:6px; padding:12px; box-shadow:0 3px 10px rgba(0,0,0,0.18); 
+            z-index:1001; /* Above game container */
+            min-width:240px; max-width: 300px; /* Max width to prevent overly wide popups */
+            backdrop-filter:blur(2px);
+            transform: translate(-50%, -100%); /* Position anchor to top-center of click, then offset */
+            transition: opacity 0.1s ease-out; /* For smooth show/hide if desired */
+        }
+        #plant-info-popup h4 { margin-top:0; margin-bottom:8px; font-size:1em; }
+        #plant-info-popup p { font-size:0.85em; margin-bottom:5px; }
+        #plant-info-popup .popup-actions { margin-top:12px; display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end;}
+        #plant-info-popup .popup-actions button { padding:5px 8px; font-size:0.8em; }
+        
+        /* Flying creatures removed for performance */
+
+        @media (max-width:768px) { #controls{height:auto;min-height:var(--controls-height);} #progress-tracker{height:var(--tracker-height-mobile);font-size:0.75em;} #plant-table th,#plant-table td{padding:4px;font-size:0.9em;} .plant-info-display{font-size:9px;padding:1px 3px;bottom:-18px;} .modal-content{width:95%;padding:15px;max-width:400px;} .custom-time-input-group{flex-wrap:wrap;} .custom-time-input-group input[type="number"]{width:50px;} #plant-info-popup{min-width:200px;padding:10px;} #plant-info-popup h4{font-size:0.95em;} #plant-info-popup p{font-size:0.8em;} }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div id="sky-gradient-layer"></div> <div id="sun-moon"></div> <div id="stars-container"></div>
+        <div id="controls">
+            <button id="start-focus">🌱 Plant New</button> <button id="zoom-in" class="icon-button">+</button> <button id="zoom-out" class="icon-button">-</button>
+            <button id="cancel-move-plant" style="display:none;">🚫 Cancel Move</button>
+            <button id="open-settings-modal" style="margin-left:auto;">⚙️</button>
+            <div id="selected-plant-actions" style="display:none;"><span id="selected-plant-name"></span><button id="harvest-apples" style="display:none;">🍎 Harvest</button><button id="pause-plant">⏸️ Pause</button><button id="resume-plant">▶️ Resume</button><button id="cut-plant" class="danger">🪓 Cut</button></div>
+        </div>
+        <div id="farm-field-container"><div id="farm-field"></div></div>
+        <div id="progress-tracker"><h2>Focus Grove</h2><table id="plant-table"><thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Focus Progress</th><th>Apples</th><th>Actions</th></tr></thead><tbody></tbody></table></div>
+    </div>
+    <div id="plant-type-modal" class="modal"><div class="modal-content"><span class="close-button" data-modal-id="plant-type-modal">&times;</span><h3>Choose Plant</h3><label for="plant-name-input">Name:</label><input type="text" id="plant-name-input"><label for="plant-type-select">Type:</label><select id="plant-type-select"><option value="tree" selected>Standard Tree</option><option value="shrub">Quick Shrub</option><option value="freeGrow">Free Grow Tree</option></select><div id="custom-time-inputs-container" style="display:none;margin-top:15px;border-top:1px solid #eee;padding-top:15px;"><h4>Set Maturity Time:</h4><div class="custom-time-input-group"><label for="custom-days">D:</label><input type="number" id="custom-days" min="0" value="0"><label for="custom-hours">H:</label><input type="number" id="custom-hours" min="0" max="23" value="0"></div><div class="custom-time-input-group"><label for="custom-minutes">M:</label><input type="number" id="custom-minutes" min="0" max="59" value="30"><label for="custom-seconds">S:</label><input type="number" id="custom-seconds" min="0" max="59" value="0"></div><p id="min-duration-warning" style="color:red;font-size:0.8em;display:none;">Min duration 10s.</p></div><div class="modal-buttons"><button id="confirm-plant-type">Start Focusing</button><button id="cancel-plant-type" class="danger">Cancel</button></div></div></div>
+    <div id="settings-modal" class="modal"><div class="modal-content"><span class="close-button" data-modal-id="settings-modal">&times;</span><h3>Settings & Info</h3><p>FocusFarm! Plant seeds, watch growth.</p><ul><li>Trees/Shrubs: Custom maturity.</li><li>Free Grow: Visual growth, no apples.</li><li>Long-press/Right-click plant for options.</li></ul><p style="margin-top:15px;"><button id="reset-farm" class="danger">Reset Farm</button></p><p style="font-size:0.8em;color:#777;margin-top:20px;">FocusFarm Stable v1.6</p></div></div>
+    <div id="plant-info-popup"><h4>Plant Details</h4><p><strong>Name:</strong><span id="popup-plant-name"></span></p><p><strong>Type:</strong><span id="popup-plant-type"></span></p><p><strong>Planted:</strong><span id="popup-plant-planted-at"></span></p><p id="popup-maturity-info-line"><strong>Maturity:</strong><span id="popup-plant-maturity"></span></p><p id="popup-next-apple-line"style="display:none;"><strong>Next Apple:</strong><span id="popup-plant-next-apple"></span></p><p id="popup-total-apples-line"style="display:none;"><strong>Harvested:</strong><span id="popup-plant-total-apples"></span></p><div class="popup-actions"><button id="popup-move-plant">➡️ Move</button><button id="popup-pause-resume-plant"></button><button id="popup-cut-plant"class="danger">🪓 Cut</button><button id="popup-close"class="secondary">Close</button></div></div>
+
+    <script>
+        const PLANT_LIMIT = 50;
+        const SAVE_KEY = 'focusFarmState_v9_stable'; // Incremented version
+        const MIN_CUSTOM_DURATION_MS = 10 * 1000; 
+        const LONG_PRESS_DURATION = 700;
+
+        const PLANT_TYPES = {
+            tree: { name: "Standard Tree", timeToNextApple: 30*60*1000, maxApples: 15, growthStages: 6, baseDimensions: { width: 60, height: 80, trunkWidth: 10, trunkHeight: 40 }, growthFactor: 1.25, allowsCustomTime: true, defaultCustomDuration: { d:0, h:1, m:0, s:0 } },
+            shrub: { name: "Quick Shrub", timeToNextApple: 15*60*1000, maxApples: 10, growthStages: 6, baseDimensions: { width: 50, height: 50, trunkWidth: 8, trunkHeight: 20 }, growthFactor: 1.2, allowsCustomTime: true, defaultCustomDuration: { d:0, h:0, m:30, s:0 } },
+            freeGrow: { name: "Free Grow Tree", growthStages: 6, baseDimensions: { width: 60, height: 80, trunkWidth: 10, trunkHeight: 40 }, growthFactor: 1.25, allowsCustomTime: false, isFreeGrow: true, timePerVisualStage: 1*60*60*1000 }
+        };
+
+        const dom = { /* Unchanged from previous working version */
+            farmFieldContainer:document.getElementById('farm-field-container'),farmField:document.getElementById('farm-field'),startFocusButton:document.getElementById('start-focus'),zoomInButton:document.getElementById('zoom-in'),zoomOutButton:document.getElementById('zoom-out'),selectedPlantActionsDiv:document.getElementById('selected-plant-actions'),selectedPlantNameSpan:document.getElementById('selected-plant-name'),harvestApplesButton:document.getElementById('harvest-apples'),pauseButton:document.getElementById('pause-plant'),resumeButton:document.getElementById('resume-plant'),cutButton:document.getElementById('cut-plant'),plantTableBody:document.getElementById('plant-table').querySelector('tbody'),root:document.documentElement,plantTypeModal:document.getElementById('plant-type-modal'),plantNameInput:document.getElementById('plant-name-input'),plantTypeSelect:document.getElementById('plant-type-select'),customTimeInputsContainer:document.getElementById('custom-time-inputs-container'),customDaysInput:document.getElementById('custom-days'),customHoursInput:document.getElementById('custom-hours'),customMinutesInput:document.getElementById('custom-minutes'),customSecondsInput:document.getElementById('custom-seconds'),minDurationWarning:document.getElementById('min-duration-warning'),confirmPlantTypeButton:document.getElementById('confirm-plant-type'),cancelPlantTypeButton:document.getElementById('cancel-plant-type'),settingsModal:document.getElementById('settings-modal'),openSettingsModalButton:document.getElementById('open-settings-modal'),resetFarmButton:document.getElementById('reset-farm'),skyGradientLayer:document.getElementById('sky-gradient-layer'),sunMoonElement:document.getElementById('sun-moon'),starsContainer:document.getElementById('stars-container'),plantInfoPopup:document.getElementById('plant-info-popup'),popupPlantName:document.getElementById('popup-plant-name'),popupPlantType:document.getElementById('popup-plant-type'),popupPlantPlantedAt:document.getElementById('popup-plant-planted-at'),popupMaturityInfoLine:document.getElementById('popup-maturity-info-line'),popupPlantMaturity:document.getElementById('popup-plant-maturity'),popupNextAppleLine:document.getElementById('popup-next-apple-line'),popupPlantNextApple:document.getElementById('popup-plant-next-apple'),popupTotalApplesLine:document.getElementById('popup-total-apples-line'),popupPlantTotalApples:document.getElementById('popup-plant-total-apples'),popupMovePlantButton:document.getElementById('popup-move-plant'),popupPauseResumeButton:document.getElementById('popup-pause-resume-plant'),popupCutButton:document.getElementById('popup-cut-plant'),popupCloseButton:document.getElementById('popup-close'),cancelMovePlantButton:document.getElementById('cancel-move-plant')
+        };
+
+        let plants = []; let selectedPlantId = null; let isPlantingMode = false; let plantingPlacementActive = false; 
+        let zoomLevel = 1.0; let isDragging = false; let dragStartX, dragStartY, initialScrollLeft, initialScrollTop;
+        let gameLoopIntervalId = null; let lastHourUpdate = -1; let tempPlantDataForModal = {}; 
+        let longPressTimer = null; let plantInfoPopupTargetId = null; let movingPlantId = null;
+        const plantElementsCache = {}; 
+        const plantTrackerRowCache = {}; 
+
+        function initGame() {
+            loadState(); 
+            setupEventListeners();
+            
+            dom.farmField.innerHTML = ''; 
+            plants.forEach(plant => { renderPlant(plant); });
+
+            dom.plantTableBody.innerHTML = ''; 
+            updateProgressTrackerHeader(); 
+            plants.forEach(plant => { addPlantToTracker(plant); }); 
+            
+            applyZoom(); updateEnvironment();
+            
+            dom.farmFieldContainer.scrollLeft = (dom.farmField.offsetWidth*zoomLevel - dom.farmFieldContainer.clientWidth)/2;
+            dom.farmFieldContainer.scrollTop = (dom.farmField.offsetHeight*zoomLevel - dom.farmFieldContainer.clientHeight)/2;
+
+            if (gameLoopIntervalId) clearInterval(gameLoopIntervalId);
+            gameLoopIntervalId = setInterval(updateGame, 1000);
+        }
+
+        function saveState() { try { const n=Date.now(); plants.forEach(p=>{if(p.state === 'growing' && p.currentSessionStartTime){ p.totalFocusedTime += (n - p.currentSessionStartTime); p.currentSessionStartTime = n; } p.lastSavedTime=n;}); localStorage.setItem(SAVE_KEY,JSON.stringify({plants,zoomLevel}));} catch(e){console.error("Save err:",e); if(e.name==='QuotaExceededError')alert("Save fail. Storage full.");}}
+        
+        function loadState() { 
+            const s=localStorage.getItem(SAVE_KEY); 
+            if(s){
+                try{
+                    const t=JSON.parse(s);
+                    plants=t.plants||[];
+                    zoomLevel=t.zoomLevel||1.0;
+                    handleOfflineTime(); // Process offline time AFTER plants are loaded
+                }catch(e){
+                    console.error("Load err:",e);plants=[];zoomLevel=1.0;
+                }
+            }
+        }
+
+        function handleOfflineTime() {
+            const now = Date.now();
+            plants.forEach(plant => {
+                if (!plant.plantedAt) return; // Skip malformed plants
+                
+                // Ensure all necessary properties exist
+                plant.totalFocusedTime = plant.totalFocusedTime || 0;
+                plant.apples = plant.apples || 0;
+                plant.unharvestedApples = plant.unharvestedApples || 0; 
+                if (!plant.typeKey || !PLANT_TYPES[plant.typeKey]) plant.typeKey = 'tree'; 
+                plant.customMaturityDuration = plant.customMaturityDuration || 0;
+                plant.state = plant.state || 'paused'; // Default to paused if state is missing
+
+                const lastKnownTime = plant.lastSavedTime || plant.plantedAt;
+                const elapsedOffline = now - lastKnownTime;
+
+                if (elapsedOffline > 0) { // Only proceed if time has passed
+                    if (plant.state === 'growing') {
+                        plant.totalFocusedTime += elapsedOffline;
+                        // Recalculate apples if it was growing and matured offline
+                        const plantTypeDetails = PLANT_TYPES[plant.typeKey];
+                        if (!plantTypeDetails.isFreeGrow && plant.customMaturityDuration > 0) {
+                            if (plant.totalFocusedTime >= plant.customMaturityDuration) {
+                                const timeAsMature = plant.totalFocusedTime - plant.customMaturityDuration;
+                                const potentialApples = Math.floor(timeAsMature / plantTypeDetails.timeToNextApple);
+                                plant.unharvestedApples = Math.min(plantTypeDetails.maxApples, potentialApples);
+                            }
+                        }
+                    }
+                    // For all plants, regardless of state, update lastSavedTime.
+                    // currentSessionStartTime will be set to `now` in updateGame if it's 'growing'
+                }
+                // Important: Set currentSessionStartTime based on the state *after* offline adjustments
+                plant.currentSessionStartTime = (plant.state === 'growing') ? now : null;
+                plant.lastSavedTime = now; // Critical for next load cycle
+            });
+        }
+        
+        function setupEventListeners() { /* Unchanged */ dom.startFocusButton.addEventListener('click',handleStartFocusClick);dom.zoomInButton.addEventListener('click',zoomIn);dom.zoomOutButton.addEventListener('click',zoomOut);dom.harvestApplesButton.addEventListener('click',harvestSelectedPlantApples);dom.pauseButton.addEventListener('click',pauseSelectedPlant);dom.resumeButton.addEventListener('click',resumeSelectedPlant);dom.cutButton.addEventListener('click',()=>confirmAndCutPlant(selectedPlantId));dom.farmFieldContainer.addEventListener('click',handleFieldClick);dom.farmFieldContainer.addEventListener('mousedown',startDragging);dom.farmFieldContainer.addEventListener('mousemove',drag);dom.farmFieldContainer.addEventListener('mouseup',stopDragging);dom.farmFieldContainer.addEventListener('mouseleave',stopDragging);let iD=null,iZ=zoomLevel;dom.farmFieldContainer.addEventListener('touchstart',(e)=>{if(e.touches.length===1&&!plantingPlacementActive&&!movingPlantId){startDragging(e.touches[0]);}else if(e.touches.length===2){isDragging=false;document.body.style.overflow='hidden';iD=getTouchDistance(e.touches);iZ=zoomLevel;e.preventDefault();}},{passive:false});dom.farmFieldContainer.addEventListener('touchmove',(e)=>{if(e.touches.length===1&&isDragging){e.preventDefault();drag(e.touches[0]);}else if(e.touches.length===2&&iD!==null){e.preventDefault();const d=getTouchDistance(e.touches);zoomLevel=Math.max(0.1,Math.min(5.0,iZ*(d/iD)));applyZoom();}},{passive:false});dom.farmFieldContainer.addEventListener('touchend',(e)=>{if(e.touches.length<2){iD=null;document.body.style.overflow='';}if(e.touches.length<1)stopDragging();});dom.farmFieldContainer.addEventListener('contextmenu',handleFieldContextMenu);document.querySelectorAll('.close-button').forEach(b=>b.addEventListener('click',()=>closeModal(b.dataset.modalId)));dom.plantTypeSelect.addEventListener('change',toggleCustomTimeInputs);dom.confirmPlantTypeButton.addEventListener('click',confirmPlantSelection);dom.cancelPlantTypeButton.addEventListener('click',()=>closeModal('plant-type-modal'));dom.openSettingsModalButton.addEventListener('click',()=>openModal('settings-modal'));dom.resetFarmButton.addEventListener('click',resetFarmData);dom.popupCloseButton.addEventListener('click',closePlantInfoPopup);dom.popupMovePlantButton.addEventListener('click',initiateMovePlantFromPopup);dom.popupPauseResumeButton.addEventListener('click',togglePauseResumeFromPopup);dom.popupCutButton.addEventListener('click',cutPlantFromPopup);dom.cancelMovePlantButton.addEventListener('click',cancelMovePlantMode);document.addEventListener('keydown',(e)=>{if(e.key==="Escape"&&movingPlantId)cancelMovePlantMode();});window.addEventListener('beforeunload',saveState);}
+        function toggleCustomTimeInputs() { /* Unchanged */ const t=dom.plantTypeSelect.value,p=PLANT_TYPES[t];if(p&&p.allowsCustomTime){dom.customTimeInputsContainer.style.display='block';const d=p.defaultCustomDuration;dom.customDaysInput.value=d.d;dom.customHoursInput.value=d.h;dom.customMinutesInput.value=d.m;dom.customSecondsInput.value=d.s;}else{dom.customTimeInputsContainer.style.display='none';}}
+        function openModal(modalId) { /* Unchanged */ const m=document.getElementById(modalId);if(m){m.style.display='flex';if(modalId==='plant-type-modal'){dom.plantNameInput.value=`Focus ${plants.length+1}`;dom.plantNameInput.focus();toggleCustomTimeInputs();}}}
+        function closeModal(modalId,oC=true) { /* Unchanged */ const m=document.getElementById(modalId);if(m)m.style.display='none';if(modalId==='plant-type-modal'&&oC){isPlantingMode=false;plantingPlacementActive=false;dom.startFocusButton.classList.remove('planting');dom.startFocusButton.textContent='🌱 Plant New';dom.farmFieldContainer.classList.remove('planting-active');}}
+        function startDragging(e) { /* Unchanged */ if(longPressTimer||plantInfoPopupTargetId||movingPlantId){isDragging=false;return;}const t=e.target===dom.farmFieldContainer||e.target===dom.farmField;if(t&&!plantingPlacementActive){isDragging=true;dragStartX=e.pageX;dragStartY=e.pageY;initialScrollLeft=dom.farmFieldContainer.scrollLeft;initialScrollTop=dom.farmFieldContainer.scrollTop;dom.farmFieldContainer.classList.add('dragging');}else{isDragging=false;}}
+        function drag(e) { /* Unchanged */ if(!isDragging)return;if(e.type==='mousemove')e.preventDefault();const x=e.pageX-dragStartX,y=e.pageY-dragStartY;dom.farmFieldContainer.scrollLeft=initialScrollLeft-x;dom.farmFieldContainer.scrollTop=initialScrollTop-y;}
+        function stopDragging() { /* Unchanged */ if(isDragging){isDragging=false;dom.farmFieldContainer.classList.remove('dragging');}}
+        function getTouchDistance(touches) { /* Unchanged */ const x=touches[0].clientX-touches[1].clientX,y=touches[0].clientY-touches[1].clientY;return Math.sqrt(x*x+y*y);}
+        function handleStartFocusClick() { /* Unchanged */ if(isPlantingMode||plantingPlacementActive){closeModal('plant-type-modal',true);return;}if(plants.length>=PLANT_LIMIT){alert(`Grove full! (Max ${PLANT_LIMIT})`);return;}isPlantingMode=true;openModal('plant-type-modal');dom.startFocusButton.classList.add('planting');dom.startFocusButton.textContent='❌ Cancel Planting';deselectPlant();}
+        function getCustomDurationMs() { /* Unchanged */ const d=parseInt(dom.customDaysInput.value)||0,h=parseInt(dom.customHoursInput.value)||0,m=parseInt(dom.customMinutesInput.value)||0,s=parseInt(dom.customSecondsInput.value)||0;return(((d*24+h)*60+m)*60+s)*1000;}
+        function confirmPlantSelection() { /* Unchanged */ const n=dom.plantNameInput.value.trim()||`Focus ${plants.length+1}`,t=dom.plantTypeSelect.value,p=PLANT_TYPES[t];let cM=0;dom.minDurationWarning.style.display='none';if(p.allowsCustomTime){cM=getCustomDurationMs();if(cM<MIN_CUSTOM_DURATION_MS){dom.minDurationWarning.style.display='block';return;}}tempPlantDataForModal={name:n,typeKey:t,customMaturityDuration:cM};isPlantingMode=false;plantingPlacementActive=true;closeModal('plant-type-modal',false);dom.farmFieldContainer.classList.add('planting-active');}
+        function handleFieldClick(e){const cPE=e.target.closest('.plant');if(cPE){if(!movingPlantId)selectPlant(cPE.dataset.id);if(plantingPlacementActive||isPlantingMode)closeModal('plant-type-modal',true);return;}if(plantingPlacementActive)handlePlantingPlacement(e);else if(movingPlantId)handleMovePlantPlacement(e);}
+        function handlePlantingPlacement(e){if(isDragging||(e.target!==dom.farmField&&e.target!==dom.farmFieldContainer))return;const cR=dom.farmFieldContainer.getBoundingClientRect(),cX=(dom.farmFieldContainer.scrollLeft+e.clientX-cR.left)/zoomLevel,cY=(dom.farmFieldContainer.scrollTop+e.clientY-cR.top)/zoomLevel,rX=Math.max(5,Math.min(95,(cX/dom.farmField.offsetWidth)*100)),rY=Math.max(5,Math.min(95,(cY/dom.farmField.offsetHeight)*100));plantNewSeed(rX,rY,tempPlantDataForModal.name,tempPlantDataForModal.typeKey,tempPlantDataForModal.customMaturityDuration);plantingPlacementActive=false;dom.farmFieldContainer.classList.remove('planting-active');dom.startFocusButton.classList.remove('planting');dom.startFocusButton.textContent='🌱 Plant New';tempPlantDataForModal={};}
+        function handleMovePlantPlacement(e){if(isDragging||(e.target!==dom.farmField&&e.target!==dom.farmFieldContainer))return;const pTM=findPlantById(movingPlantId);if(!pTM){cancelMovePlantMode();return;}const cR=dom.farmFieldContainer.getBoundingClientRect(),cX=(dom.farmFieldContainer.scrollLeft+e.clientX-cR.left)/zoomLevel,cY=(dom.farmFieldContainer.scrollTop+e.clientY-cR.top)/zoomLevel;pTM.x=Math.max(5,Math.min(95,(cX/dom.farmField.offsetWidth)*100));pTM.y=Math.max(5,Math.min(95,(cY/dom.farmField.offsetHeight)*100));const pE=plantElementsCache[movingPlantId]?.element;if(pE){pE.style.left=`${pTM.x}%`;pE.style.top=`${pTM.y}%`;}saveState();cancelMovePlantMode();}
+        function plantNewSeed(x,y,n,tK,cMD) { /* Unchanged */ if(plants.length>=PLANT_LIMIT){alert(`Farm full!`);return;}const N=Date.now(),nP={id:`plant-${N}-${Math.random().toString(16).slice(2,8)}`,name:n,typeKey:tK,x,y,customMaturityDuration:cMD,plantedAt:N,currentSessionStartTime:N,totalFocusedTime:0,state:'growing',apples:0,unharvestedApples:0,pauseTime:null,lastSavedTime:N,currentStage:0};plants.push(nP);renderPlant(nP);addPlantToTracker(nP);saveState();selectPlant(nP.id);}
+        function findPlantById(id) { return plants.find(p=>p.id===id); }
+        function findPlantIndexById(id) { return plants.findIndex(p=>p.id===id); }
+        function selectPlant(id) { /* Unchanged */ if(selectedPlantId===id&&!movingPlantId)return;if(selectedPlantId){const oE=plantElementsCache[selectedPlantId]?.element;if(oE)oE.classList.remove('selected');}selectedPlantId=id;const p=findPlantById(id);if(p){const nE=plantElementsCache[id]?.element;if(nE)nE.classList.add('selected');updateActionButtons(p);dom.selectedPlantActionsDiv.style.display='flex';dom.selectedPlantNameSpan.textContent=p.name;}else{deselectPlant();}}
+        function deselectPlant() { /* Unchanged */ if(selectedPlantId){const oE=plantElementsCache[selectedPlantId]?.element;if(oE)oE.classList.remove('selected');}selectedPlantId=null;dom.selectedPlantActionsDiv.style.display='none';}
+        function updateActionButtons(p) { /* Unchanged */ if(!p){dom.selectedPlantActionsDiv.style.display='none';return;}const pTD=PLANT_TYPES[p.typeKey];dom.pauseButton.style.display=p.state==='growing'?'inline-block':'none';dom.resumeButton.style.display=p.state==='paused'?'inline-block':'none';dom.cutButton.style.display='inline-block';let iMA=false;if(!pTD.isFreeGrow&&p.customMaturityDuration>0){const eT=p.totalFocusedTime+(p.state==='growing'&&p.currentSessionStartTime?Date.now()-p.currentSessionStartTime:0);iMA=eT>=p.customMaturityDuration;}dom.harvestApplesButton.style.display=iMA&&p.unharvestedApples>0?'inline-block':'none';}
+        function pauseSelectedPlant() { /* Unchanged */ if(!selectedPlantId)return;const p=findPlantById(selectedPlantId);if(p&&p.state==='growing'){const n=Date.now();p.totalFocusedTime+=(n-p.currentSessionStartTime);p.state='paused';p.pauseTime=n;p.currentSessionStartTime=null;p.lastSavedTime=n;updateActionButtons(p);updatePlantVisuals(p);updatePlantTrackerRow(p);saveState();}}
+        function resumeSelectedPlant() { /* Unchanged */ if(!selectedPlantId)return;const p=findPlantById(selectedPlantId);if(p&&p.state==='paused'){const n=Date.now();p.state='growing';p.currentSessionStartTime=n;p.pauseTime=null;p.lastSavedTime=n;updateActionButtons(p);updatePlantVisuals(p);updatePlantTrackerRow(p);saveState();}}
+        function harvestSelectedPlantApples() { /* Unchanged */ if(!selectedPlantId)return;const p=findPlantById(selectedPlantId);if(p&&p.unharvestedApples>0){p.apples+=p.unharvestedApples;createAppleHarvestParticles(p.id,p.unharvestedApples);p.unharvestedApples=0;updateActionButtons(p);updatePlantVisuals(p);updatePlantTrackerRow(p);saveState();}}
+        function createAppleHarvestParticles(pId,cnt) { /* Unchanged */ const pE=plantElementsCache[pId]?.element;if(!pE)return;for(let i=0;i<Math.min(cnt,8);i++){const pt=document.createElement('div');pt.classList.add('apple');pt.style.position='absolute';const c=pE.querySelector('.canopy');if(c){pt.style.left=`${Math.random()*c.offsetWidth*0.8+c.offsetWidth*0.1}px`;pt.style.top=`${Math.random()*c.offsetHeight*0.6+c.offsetHeight*0.1}px`;}else{pt.style.left='50%';pt.style.top='50%';}pt.style.width='10px';pt.style.height='10px';pt.style.zIndex='20';const hBR=dom.harvestApplesButton.getBoundingClientRect(),pB=pE.querySelector('.plant-base'),bR=pB.getBoundingClientRect(),tX=hBR.left-bR.left+hBR.width/2-parseFloat(pt.style.left||0),tY=hBR.top-bR.top+hBR.height/2-parseFloat(pt.style.top||0);pt.animate([{transform:'translate(0,0) scale(1)',opacity:1},{transform:`translate(${tX}px, ${tY}px) scale(0.5)`,opacity:0}],{duration:700+Math.random()*300,easing:'ease-in-out',delay:i*40});pB.appendChild(pt);setTimeout(()=>pt.remove(),1000+i*40);}}
+        function confirmAndCutPlant(pId) { /* Unchanged */ if(!pId)return;const p=findPlantById(pId);if(p&&confirm(`Cut '${p.name}'?`))animateAndRemovePlant(pId);}
+        function animateAndRemovePlant(pId) { /* Unchanged */ const pE=plantElementsCache[pId]?.element;if(!pE)return;const a=document.createElement('div');a.classList.add('axe-icon');const pB=pE.querySelector('.plant-base'),t=pE.querySelector('.trunk');if(t){a.style.bottom=`calc(${t.offsetHeight*0.1}px)`;a.style.left=`calc(50% - ${t.offsetWidth*0.5+17.5}px)`;}else{a.style.bottom='0px';a.style.left='0px';}pB.appendChild(a);a.classList.add('swing');setTimeout(()=>{for(let i=0;i<8;i++){const c=document.createElement('div');c.classList.add('wood-chip');const fX=(Math.random()-0.5)*70,fY=(Math.random()-0.5)*50-25;c.style.setProperty('--fly-x',`${fX}px`);c.style.setProperty('--fly-y',`${fY}px`);if(t){c.style.left=`calc(50%+${(Math.random()-0.5)*t.offsetWidth*0.4}px)`;c.style.bottom=`${Math.random()*t.offsetHeight*0.25}px`;}else{c.style.left='50%';c.style.bottom='0px';}pB.appendChild(c);setTimeout(()=>c.remove(),700);}},150);setTimeout(()=>pE.classList.add('shaking'),80);a.addEventListener('animationend',()=>{a.remove();pE.classList.remove('shaking');pE.classList.add('falling');pE.addEventListener('animationend',()=>{const idx=findPlantIndexById(pId);if(idx>-1)plants.splice(idx,1);delete plantElementsCache[pId];delete plantTrackerRowCache[pId];pE.remove();const tr=document.querySelector(`#plant-table tbody tr[data-plant-id="${pId}"]`);if(tr)tr.remove();if(selectedPlantId===pId)deselectPlant();saveState();if(plants.length===0)updateProgressTrackerHeader();},{once:true});},{once:true});}
+        function calculatePlantStage(p,eTFT) { /* Unchanged */ const pTD=PLANT_TYPES[p.typeKey],mSI=pTD.growthStages-1,mSIdx=mSI-1,fGSI=1;if(eTFT<=0)return 0;if(pTD.isFreeGrow){if(pTD.timePerVisualStage>0)return Math.min(mSI,fGSI+Math.floor(eTFT/pTD.timePerVisualStage));return fGSI;}else{const tTM=p.customMaturityDuration;if(tTM<=0)return fGSI;if(eTFT<tTM){const pr=eTFT/tTM,nIVS=mSIdx-fGSI;return fGSI+Math.floor(pr*nIVS);}else{let s=mSIdx;if(eTFT>=tTM*2)s=mSI;return s;}}}
+        
+        function updateGame() { 
+            const now=Date.now(),currentHour=new Date().getHours();
+            if(currentHour!==lastHourUpdate){updateEnvironment(currentHour);lastHourUpdate=currentHour;plants.forEach(p=>updatePlantShadow(p.id,currentHour));}
+            let needsSave=false;
+            plants.forEach(plant=>{
+                const plantTypeDetails = PLANT_TYPES[plant.typeKey];
+                let effectiveTotalFocusedTime = plant.totalFocusedTime;
+
+                if(plant.state === 'growing') {
+                    if (plant.currentSessionStartTime) { // Ensure startTime exists before calculating
+                        effectiveTotalFocusedTime += (now - plant.currentSessionStartTime);
+                    } else { // If growing but no startTime (e.g. after load), set it
+                        plant.currentSessionStartTime = now;
+                    }
+                }
+
+                const newStage=calculatePlantStage(plant,effectiveTotalFocusedTime);
+                let visualChanged=false;
+                if(newStage!==plant.currentStage){plant.currentStage=newStage;plant.justGrew=true;visualChanged=true;needsSave=true;}
+                
+                if(plant.state==='growing'&&!plantTypeDetails.isFreeGrow&&plant.customMaturityDuration>0){
+                    const isMatureNow=effectiveTotalFocusedTime>=plant.customMaturityDuration;
+                    if(isMatureNow){
+                        const timeAsMature=effectiveTotalFocusedTime-plant.customMaturityDuration;
+                        const potentialNewApples=Math.floor(timeAsMature/plantTypeDetails.timeToNextApple);
+                        const newTotalUnharvested=Math.min(plantTypeDetails.maxApples,potentialNewApples);
+                        if(newTotalUnharvested>plant.unharvestedApples){plant.unharvestedApples=newTotalUnharvested;visualChanged=true;needsSave=true;}
+                    }
+                }
+                if(plant.state==='growing'){const cGM=Math.floor(effectiveTotalFocusedTime/60000),pTGM=Math.floor(plant.totalFocusedTime/60000);if(cGM>pTGM&&cGM>0)animateWaterDrop(plant.id);}
+                if(visualChanged)updatePlantVisuals(plant);
+                updatePlantInfoDisplay(plant,effectiveTotalFocusedTime);
+                updatePlantTrackerRow(plant,effectiveTotalFocusedTime);
+                
+                // Periodically update lastSavedTime for growing plants to minimize lost progress if tab crashes
+                if(plant.state==='growing'&&(now-(plant.lastSavedTime||plant.currentSessionStartTime)>60000)){ // Every minute
+                    plant.lastSavedTime=now;
+                    // Optionally, add plant.totalFocusedTime += (now - plant.currentSessionStartTime); plant.currentSessionStartTime = now;
+                    // This would "commit" the growth more frequently if saveState() is not called.
+                    // For now, full saveState on needsSave flag is the primary mechanism.
+                    // The saveState beforeunload handles the most common case.
+                }
+            });
+            if(needsSave)saveState();
+            if(selectedPlantId){const p=findPlantById(selectedPlantId);if(p)updateActionButtons(p);}
+            // Creature spawning removed
+        }
+        
+        function renderPlant(p) { 
+            const pE=document.createElement('div');pE.classList.add('plant');pE.dataset.id=p.id;pE.dataset.stage=p.currentStage;
+            if(p.typeKey==='shrub'||p.typeKey==='freeGrow')pE.classList.add(p.typeKey);
+            pE.style.left=`${p.x}%`;pE.style.top=`${p.y}%`;pE.style.setProperty('--sway-delay',`${Math.random()*-10}s`);
+            const pB=document.createElement('div');pB.classList.add('plant-base');
+            const paI=document.createElement('span');paI.classList.add('pause-icon');paI.textContent='⏸️';pB.appendChild(paI);
+            const iD=document.createElement('div');iD.classList.add('plant-info-display');pB.appendChild(iD);
+            pE.appendChild(pB);
+            pE.addEventListener('click',(e)=>{e.stopPropagation();if(movingPlantId){handleMovePlantPlacement(e);return;}if(plantingPlacementActive||isPlantingMode)closeModal('plant-type-modal',true);selectPlant(p.id);});
+            pE.addEventListener('mousedown',(e)=>handlePlantMouseDown(e,p.id));pE.addEventListener('mouseup',handlePlantMouseUp);pE.addEventListener('mouseleave',handlePlantMouseUp);
+            pE.addEventListener('touchstart',(e)=>handlePlantMouseDown(e.touches[0],p.id,true),{passive:false}); 
+            pE.addEventListener('touchend',handlePlantMouseUp);pE.addEventListener('touchcancel',handlePlantMouseUp);
+            pE.addEventListener('contextmenu',(e)=>{e.preventDefault();showPlantInfoPopup(p.id,e.clientX,e.clientY);}); // Use clientX/Y for fixed popup
+            dom.farmField.appendChild(pE);
+            plantElementsCache[p.id] = { element: pE, base: pB, infoDisplay: iD, pauseIcon: paI }; 
+            updatePlantVisuals(p); 
+        }
+        function updatePlantVisuals(p) { /* Unchanged */ const cachedEls=plantElementsCache[p.id];if(!cachedEls)return;const pE=cachedEls.element,b=cachedEls.base;const pTD=PLANT_TYPES[p.typeKey];pE.dataset.stage=p.currentStage;pE.classList.toggle('paused',p.state==='paused');b.querySelectorAll('.trunk, .canopy, .plant-shadow, .apple').forEach(e=>e.remove());if(p.currentStage===0){b.style.width=`18px`;b.style.height=`14px`;const s=document.createElement('div');s.classList.add('plant-shadow');b.appendChild(s);}else{const t=document.createElement('div');t.classList.add('trunk');const c=document.createElement('div');c.classList.add('canopy');if(p.typeKey==='shrub')c.classList.add('shrub-canopy');const bDSFS=3;let sF=1;if(p.currentStage>bDSFS)sF=Math.pow(pTD.growthFactor,p.currentStage-bDSFS);else if(p.currentStage<bDSFS&&p.currentStage>0)sF=Math.pow(1/pTD.growthFactor,bDSFS-p.currentStage);const ptBD=pTD.baseDimensions,cW=ptBD.width*sF,cH=ptBD.height*sF,tHV=ptBD.trunkHeight*sF,tW=ptBD.trunkWidth*sF,caH=(cH-tHV)*1.15,caW=cW;b.style.width=`${cW}px`;b.style.height=`${cH}px`;t.style.width=`${tW}px`;t.style.height=`${tHV}px`;c.style.width=`${caW}px`;c.style.height=`${caH}px`;c.style.bottom=`calc(${tHV}px - ${Math.min(8,tHV*0.08)}px)`;c.style.left=`50%`;c.style.transform=`translateX(-50%)`;b.appendChild(t);b.appendChild(c);const sh=document.createElement('div');sh.classList.add('plant-shadow');sh.style.width=`${cW*0.75}px`;b.appendChild(sh);updatePlantShadow(p.id,new Date().getHours());if(!pTD.isFreeGrow&&p.unharvestedApples>0){const mSI=pTD.growthStages-2;if(p.currentStage>=mSI){for(let i=0;i<p.unharvestedApples;i++){const aE=document.createElement('div');aE.classList.add('apple');const aX=Math.random()*(caW*0.65)+(caW*0.175),aY=Math.random()*(caH*0.55)+(caH*0.1);aE.style.left=`${aX-5}px`;aE.style.top=`${aY-5}px`;c.appendChild(aE);}}}}b.style.setProperty('--plant-scale',p.justGrew?'1.08':'1');if(p.justGrew)setTimeout(()=>{b.style.setProperty('--plant-scale','1');p.justGrew=false;},150);}
+        function updatePlantInfoDisplay(p,eTFT) { /* Unchanged */ const iD=plantElementsCache[p.id]?.infoDisplay;if(!iD)return;const pTD=PLANT_TYPES[p.typeKey];if(p.state==='paused')iD.textContent=`Paused. Total: ${formatDuration(eTFT,false)}`;else if(p.state==='growing'){if(pTD.isFreeGrow)iD.textContent=`Focus: ${formatDuration(eTFT)} (Freely)`;else{const tTM=p.customMaturityDuration;if(eTFT<tTM)iD.textContent=`Focus: ${formatDuration(eTFT)}/${formatDuration(tTM,false)}`;else{let aT='';if(p.unharvestedApples<pTD.maxApples){const tIACC=(eTFT-tTM)%pTD.timeToNextApple,tTN=pTD.timeToNextApple-tIACC;aT=`(Next 🍎 ${formatDuration(tTN,true)})`;}else aT=`(🍎 Full!)`;iD.textContent=`Total: ${formatDuration(eTFT,false)} ${aT}`;}}}else iD.textContent='...';}
+        function animateWaterDrop(pId) { /* Unchanged */ const e=plantElementsCache[pId]?.base;if(!e||e.querySelector('.water-drop'))return;const d=document.createElement('div');d.classList.add('water-drop');e.appendChild(d);d.addEventListener('animationend',()=>d.remove());}
+        function updateEnvironment(h=new Date().getHours()) { /* Wind opacity now directly set */ let sT,sB,g,gD,sMC,shC,sMX,sMY,sMS=45,sO=0,wOV=0;if(h>=5&&h<7){sT='#FFC0CB';sB='#FFA07A';sMC='#FFD700';g='#B8860B';gD='#8B4513';shC='rgba(0,0,0,0.12)';sMX=10+(h-5)*10;sMY=30-(h-5)*10;wOV=0.015;}else if(h>=7&&h<17){sT='#87CEEB';sB='#ADD8E6';sMC='#FFD700';g='#A0522D';gD='#8B4513';shC='rgba(0,0,0,0.20)';sMX=10+(h-7)*8;sMY=10;if(h>=12)sMY=10+(h-12)*2;wOV=0.025;}else if(h>=17&&h<20){sT='#FFA07A';sB='#D2691E';sMC='#FFA500';g='#8B4513';gD='#5A2D0C';shC='rgba(0,0,0,0.15)';sMX=90-(19-h)*10;sMY=20+(h-17)*5;wOV=0.01;}else{sT='#000020';sB='#101040';sMC='#E8E8E8';sMS=38;g='#4A3B31';gD='#3D2B1F';shC='rgba(0,0,0,0.08)';if(h>=20)sMX=10+(h-20)*15;else sMX=50+h*10;sMY=15;sO=0.9;wOV=0.003;}dom.root.style.setProperty('--sky-top',sT);dom.root.style.setProperty('--sky-bottom',sB);dom.root.style.setProperty('--ground-color',g);dom.root.style.setProperty('--ground-detail',gD);dom.root.style.setProperty('--shadow-color',shC);dom.root.style.setProperty('--wind-opacity',wOV);dom.sunMoonElement.style.backgroundColor=sMC;dom.sunMoonElement.style.boxShadow=`0 0 15px ${sMC}`;dom.sunMoonElement.style.left=`${sMX}%`;dom.sunMoonElement.style.top=`${sMY}%`;dom.sunMoonElement.style.width=`${sMS}px`;dom.sunMoonElement.style.height=`${sMS}px`;dom.starsContainer.innerHTML='';if(sO>0){dom.starsContainer.style.opacity=sO;for(let i=0;i<30;i++){const s=document.createElement('div');s.classList.add('star');s.style.left=`${Math.random()*100}%`;s.style.top=`${Math.random()*60}%`;const sz=Math.random()*1.5+0.7;s.style.width=`${sz}px`;s.style.height=`${sz}px`;s.style.animationDelay=`${Math.random()*2.5}s`;dom.starsContainer.appendChild(s);}}else dom.starsContainer.style.opacity=0;}
+        function updatePlantShadow(pId,h=new Date().getHours()) { /* Unchanged */ const e=plantElementsCache[pId]?.element;if(!e)return;const s=e.querySelector('.plant-shadow');if(!s)return;let sX=1,tXP=-50;if(h>=6&&h<18){const dP=(h-6)/12;sX=1+Math.abs(dP-0.5)*1.3;tXP=-50+(dP-0.5)*80;}else sX=0.75;s.style.transform=`translateX(${tXP}%) scaleX(${sX.toFixed(2)})`;}
+        function updateProgressTrackerHeader() { /* Unchanged */ if(plants.length===0)dom.plantTableBody.innerHTML='<tr><td colspan="6" style="text-align:center; padding:15px;">Grove empty. Plant!</td></tr>';else if(dom.plantTableBody.querySelector('td[colspan="6"]'))dom.plantTableBody.innerHTML='';}
+        function addPlantToTracker(p) { /* Unchanged */ updateProgressTrackerHeader();const r=dom.plantTableBody.insertRow(0);r.dataset.plantId=p.id;const nameCell=r.insertCell();nameCell.textContent=p.name;const typeCell=r.insertCell();typeCell.textContent=PLANT_TYPES[p.typeKey].name;const statusCell=r.insertCell();const progressCell=r.insertCell();const applesCell=r.insertCell();const actionsCell=r.insertCell();actionsCell.appendChild(createButtonInTracker('👁️',()=>centerViewOnPlant(p.id)));plantTrackerRowCache[p.id]={row:r,nameCell,typeCell,statusCell,progressCell,applesCell,actionsCell};updatePlantTrackerRow(p);}
+        function updatePlantTrackerRow(p,eTFTO) { /* Unchanged */ const cache=plantTrackerRowCache[p.id];if(!cache)return;const pTD=PLANT_TYPES[p.typeKey];let eTFT=eTFTO!==undefined?eTFTO:p.totalFocusedTime;if(p.state==='growing'&&p.currentSessionStartTime&&eTFTO===undefined)eTFT+=(Date.now()-p.currentSessionStartTime);cache.nameCell.textContent=p.name;cache.statusCell.textContent=p.state==='growing'?`🌲 S${p.currentStage}`:`⏸️ S${p.currentStage}`;if(pTD.isFreeGrow){cache.progressCell.textContent=`Total: ${formatDuration(eTFT,false)}`;cache.applesCell.textContent='N/A';}else{const tTM=p.customMaturityDuration;if(eTFT<tTM)cache.progressCell.textContent=`${formatDuration(eTFT)}/${formatDuration(tTM,false)}`;else{let nAI='';if(p.unharvestedApples<pTD.maxApples&&p.state==='growing'){const tIACC=(eTFT-tTM)%pTD.timeToNextApple,tTN=pTD.timeToNextApple-tIACC;nAI=`(🍎 ${formatDuration(tTN,true)})`;}else if(p.unharvestedApples>=pTD.maxApples)nAI=`(🍎 Full!)`;cache.progressCell.textContent=`Total: ${formatDuration(eTFT,false)} ${nAI}`;}}if(!pTD.isFreeGrow)cache.applesCell.textContent=`H:${p.apples},On:${p.unharvestedApples}`;const aC=cache.actionsCell;Array.from(aC.children).forEach(c=>{if(!c.textContent.includes('👁️'))c.remove();});if(p.state==='growing')aC.appendChild(createButtonInTracker('⏸️',()=> {selectPlant(p.id);pauseSelectedPlant();}));else aC.appendChild(createButtonInTracker('▶️',()=> {selectPlant(p.id);resumeSelectedPlant();}));if(!pTD.isFreeGrow&&p.unharvestedApples>0)aC.appendChild(createButtonInTracker('🍎',()=> {selectPlant(p.id);harvestSelectedPlantApples();}));aC.appendChild(createButtonInTracker('✏️',()=>editPlantNameInTracker(p.id),[]));aC.appendChild(createButtonInTracker('🪓',()=>confirmAndCutPlant(p.id),['danger']));}
+        function createButtonInTracker(t,oC,cs=[]) { /* Unchanged */ const b=document.createElement('button');b.innerHTML=t;b.onclick=oC;b.classList.add('tracker-action-button');cs.forEach(c=>b.classList.add(c));return b;}
+        function editPlantNameInTracker(pId) { /* Unchanged */ const p=findPlantById(pId);if(!p)return;const nN=prompt(`Rename '${p.name}':`,p.name);if(nN!==null&&nN.trim()!==''){p.name=nN.trim().substring(0,50);updatePlantTrackerRow(p);if(selectedPlantId===p.id)dom.selectedPlantNameSpan.textContent=p.name;const e=plantElementsCache[p.id]?.element;if(e)e.title=p.name;saveState();}else if(nN==='')alert("Name empty.");}
+        function resetFarmData() { /* Unchanged */ if(confirm("DANGER! Delete ALL?")){if(confirm("IRREVERSIBLE! Confirm reset.")){plants=[];selectedPlantId=null;localStorage.removeItem(SAVE_KEY);dom.farmField.innerHTML='';dom.plantTableBody.innerHTML='';Object.keys(plantElementsCache).forEach(k=>delete plantElementsCache[k]);Object.keys(plantTrackerRowCache).forEach(k=>delete plantTrackerRowCache[k]);updateProgressTrackerHeader();deselectPlant();alert("Farm Reset.");}}}
+        function applyZoom() { /* Unchanged */ zoomLevel=Math.max(0.15,Math.min(4.0,zoomLevel));dom.farmField.style.transform=`scale(${zoomLevel})`;} 
+        function zoomIn() { /* Unchanged */ zoomLevel*=1.20;applyZoom();saveState();}
+        function zoomOut() { /* Unchanged */ zoomLevel/=1.20;applyZoom();saveState();}
+        function centerViewOnPlant(pId) { /* Unchanged */ const p=findPlantById(pId);if(!p)return;const e=plantElementsCache[pId]?.element;if(!e)return;const pX=(p.x/100)*dom.farmField.offsetWidth,pY=(p.y/100)*dom.farmField.offsetHeight,pB=e.querySelector('.plant-base'),pW=pB?pB.offsetWidth:20,pH=pB?pB.offsetHeight:15,sL=(pX+pW/2)*zoomLevel-dom.farmFieldContainer.clientWidth/2,sT=(pY+pH/2)*zoomLevel-dom.farmFieldContainer.clientHeight/2;dom.farmFieldContainer.scrollTo({left:sL,top:sT,behavior:'smooth'});selectPlant(pId);}
+        function formatDuration(ms,sOFSM=false) { /* Unchanged */ if(ms<=0)return sOFSM?"0s":"0m 0s";let tS=Math.max(0,Math.floor(ms/1000));const d=Math.floor(tS/(3600*24));tS%=(3600*24);const h=Math.floor(tS/3600);tS%=3600;const m=Math.floor(tS/60),s=tS%60;let ps=[];if(d>0)ps.push(`${d}d`);if(h>0)ps.push(`${h}h`);if(m>0)ps.push(`${m}m`);if(s>0||ps.length===0){if(!sOFSM||(d===0&&h===0&&m===0))ps.push(`${s}s`);else if(sOFSM&&ps.length>0&&m>0){}else if(ps.length>0){}else ps.push(`${s}s`);}if(ps.length===0)return"0s";return ps.join(' ');}
+        function handlePlantMouseDown(e,pId,iTE=false){clearTimeout(longPressTimer);plantInfoPopupTargetId=pId;if(isDragging)isDragging=false;longPressTimer=setTimeout(()=>{if(plantInfoPopupTargetId===pId){const cX=iTE?e.clientX:e.pageX,cY=iTE?e.clientY:e.pageY;showPlantInfoPopup(pId,cX,cY);}plantInfoPopupTargetId=null;},LONG_PRESS_DURATION);}
+        function handlePlantMouseUp(){clearTimeout(longPressTimer);plantInfoPopupTargetId=null;}
+        function handleFieldContextMenu(e){e.preventDefault();const cPE=e.target.closest('.plant');if(cPE)showPlantInfoPopup(cPE.dataset.id,e.clientX,e.clientY);} // Use clientX/Y
+        
+        function showPlantInfoPopup(pId,clickX,clickY){
+            const p=findPlantById(pId);if(!p)return;selectPlant(pId);
+            const pTD=PLANT_TYPES[p.typeKey];
+            dom.popupPlantName.textContent=p.name;dom.popupPlantType.textContent=pTD.name;
+            dom.popupPlantPlantedAt.textContent=new Date(p.plantedAt).toLocaleString([],{dateStyle:'short',timeStyle:'short'});
+            let eT=p.totalFocusedTime;if(p.state==='growing'&&p.currentSessionStartTime)eT+=(Date.now()-p.currentSessionStartTime);
+            if(pTD.isFreeGrow){dom.popupMaturityInfoLine.style.display='block';dom.popupPlantMaturity.textContent=`Growing freely. Total: ${formatDuration(eT,false)}`;dom.popupNextAppleLine.style.display='none';dom.popupTotalApplesLine.style.display='none';}else{dom.popupMaturityInfoLine.style.display='block';const tTM=p.customMaturityDuration;if(eT<tTM){dom.popupPlantMaturity.textContent=`${formatDuration(eT)}/${formatDuration(tTM,false)}`;dom.popupNextAppleLine.style.display='none';}else{dom.popupPlantMaturity.textContent=`Mature! (Total: ${formatDuration(eT,false)})`;dom.popupNextAppleLine.style.display='block';if(p.unharvestedApples<pTD.maxApples){const tIC=(eT-tTM)%pTD.timeToNextApple;dom.popupPlantNextApple.textContent=formatDuration(pTD.timeToNextApple-tIC,true);}else dom.popupPlantNextApple.textContent='Apples Full!';}dom.popupTotalApplesLine.style.display='block';dom.popupPlantTotalApples.textContent=`${p.apples} (On tree: ${p.unharvestedApples})`;}
+            dom.popupPauseResumeButton.textContent=p.state==='growing'?'⏸️ Pause':'▶️ Resume';
+            dom.popupPauseResumeButton.dataset.plantId=pId;dom.popupCutButton.dataset.plantId=pId;dom.popupMovePlantButton.dataset.plantId=pId;
+
+            // Popup Positioning Logic (Fixed relative to viewport, then constrained)
+            const popupW=dom.plantInfoPopup.offsetWidth;
+            const popupH=dom.plantInfoPopup.offsetHeight;
+            let desiredTop = clickY - popupH - 15; // Prefer above cursor
+            let desiredLeft = clickX - (popupW / 2);   // Centered horizontally on cursor
+
+            // Constrain to viewport
+            if (desiredTop < 5) desiredTop = clickY + 25; // If too high, place below cursor
+            if (desiredTop + popupH > window.innerHeight - 5) desiredTop = window.innerHeight - popupH - 5;
+            
+            if (desiredLeft < 5) desiredLeft = 5;
+            if (desiredLeft + popupW > window.innerWidth - 5) desiredLeft = window.innerWidth - popupW - 5;
+            
+            dom.plantInfoPopup.style.left=`${desiredLeft}px`;
+            dom.plantInfoPopup.style.top=`${desiredTop}px`;
+            dom.plantInfoPopup.style.display='block';
+        }
+        function closePlantInfoPopup(){dom.plantInfoPopup.style.display='none';plantInfoPopupTargetId=null;}
+        function initiateMovePlantFromPopup(){const pId=dom.popupMovePlantButton.dataset.plantId;if(!pId)return;movingPlantId=pId;closePlantInfoPopup();dom.farmFieldContainer.classList.add('moving-plant-active');dom.cancelMovePlantButton.style.display='inline-block';dom.startFocusButton.disabled=true;selectPlant(pId);const pE=plantElementsCache[movingPlantId]?.element;if(pE)pE.style.opacity='0.6';}
+        function cancelMovePlantMode(){if(movingPlantId){const pE=plantElementsCache[movingPlantId]?.element;if(pE)pE.style.opacity='1';}movingPlantId=null;dom.farmFieldContainer.classList.remove('moving-plant-active');dom.cancelMovePlantButton.style.display='none';dom.startFocusButton.disabled=false;}
+        function togglePauseResumeFromPopup(){const pId=dom.popupPauseResumeButton.dataset.plantId;if(!pId||selectedPlantId!==pId)selectPlant(pId);const p=findPlantById(pId);if(p){if(p.state==='growing')pauseSelectedPlant();else resumeSelectedPlant();const pU=findPlantById(pId),btnR=dom.popupPauseResumeButton.getBoundingClientRect();showPlantInfoPopup(pId,btnR.left + btnR.width/2, btnR.top + btnR.height/2);}} // Use button center as click point
+        function cutPlantFromPopup(){const pId=dom.popupCutButton.dataset.plantId;if(pId){confirmAndCutPlant(pId);closePlantInfoPopup();}}
+        
+        document.addEventListener('DOMContentLoaded', initGame);
+    </script>
+</body>
+</html>
